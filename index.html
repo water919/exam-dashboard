@@ -1,0 +1,1283 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🐶阿奇監考儀表板</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@500;700;900&family=Roboto+Mono:wght@500;700&display=swap');
+
+        /* 配色定義 */
+        :root {
+            --duggee-yellow: #F7C902;
+            --duggee-brown: #684E32;
+            --tag-blue: #5BC2E7;
+            --norrie-pink: #FF8CA1;
+            --happy-green: #85C441;
+            --roly-gray: #E2E8F0;
+            --betty-purple: #9F7AEA;
+            --bg-cream: #FFF9E6;
+        }
+
+        /* 全域樣式設定 */
+        body {
+            font-family: "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+            overflow: hidden;
+            background-color: var(--bg-cream);
+            color: var(--duggee-brown);
+            user-select: none;
+        }
+
+        /* 隱藏數字輸入框的箭頭 */
+        input[type=number]::-webkit-inner-spin-button,
+        input[type=number]::-webkit-outer-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+
+        /* 隱藏檔案輸入 */
+        .hidden-input {
+            display: none;
+        }
+
+        /* Modal 動畫 */
+        @keyframes bounceIn {
+            0% {
+                opacity: 0;
+                transform: scale(0.9);
+            }
+
+            50% {
+                opacity: 1;
+                transform: scale(1.02);
+            }
+
+            100% {
+                transform: scale(1);
+            }
+        }
+
+        .modal-animate {
+            animation: bounceIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
+
+        /* 自定義滾動條 - 圓潤風格 */
+        ::-webkit-scrollbar {
+            width: 10px;
+            height: 10px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background-color: #FBD38D;
+            border-radius: 99px;
+            border: 2px solid var(--bg-cream);
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background-color: #F6AD55;
+        }
+
+        /* 倒數計時字體 */
+        .font-mono-timer {
+            font-family: 'Roboto Mono', monospace;
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* 血條過渡動畫 */
+        .health-bar-transition {
+            transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.5s ease;
+        }
+
+        /* Range Input Reset */
+        input[type=range] {
+            -webkit-appearance: none;
+            background: transparent;
+        }
+
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+        }
+
+        input[type=range]:focus {
+            outline: none;
+        }
+
+        .dashboard-time-input::-webkit-calendar-picker-indicator {
+            display: none;
+        }
+
+        /* 卡通感陰影 */
+        .cartoon-shadow {
+            box-shadow: 4px 4px 0px rgba(104, 78, 50, 0.15);
+        }
+
+        .cartoon-shadow-lg {
+            box-shadow: 6px 6px 0px rgba(104, 78, 50, 0.2);
+        }
+    </style>
+</head>
+
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef, useCallback } = React;
+
+        // --- 預設資料 ---
+        const DEFAULT_SCHEDULE = [];
+
+        // --- 工具函式 ---
+        const formatTime = (date) => {
+            let h = date.getHours();
+            const m = String(date.getMinutes()).padStart(2, '0');
+            const s = String(date.getSeconds()).padStart(2, '0');
+            const ampm = h >= 12 ? '下午' : '上午';
+            h = h % 12;
+            h = h ? h : 12;
+            const hStr = String(h).padStart(2, '0');
+            return `${ampm} ${hStr}:${m}:${s}`;
+        };
+
+        const parseTime = (timeStr) => {
+            if (!timeStr) return 0;
+            const [h, m] = timeStr.split(':').map(Number);
+            return h * 3600000 + m * 60000;
+        };
+
+        const formatCountdown = (ms) => {
+            if (ms < 0) ms = 0;
+            const totalSeconds = Math.floor(ms / 1000);
+            const h = Math.floor(totalSeconds / 3600);
+            const m = Math.floor((totalSeconds % 3600) / 60);
+            const s = totalSeconds % 60;
+
+            if (h > 0) {
+                return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+            }
+            return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+        };
+
+        const formatAudioTime = (seconds) => {
+            if (!seconds || isNaN(seconds) || !isFinite(seconds)) return "00:00";
+            const m = Math.floor(seconds / 60);
+            const s = Math.floor(seconds % 60);
+            return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+        };
+
+        // --- Icons (圓潤化) ---
+        const IconUpload = ({ className }) => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></svg>;
+        const IconPlay = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M5 3l14 9-14 9V3z" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" /></svg>;
+        const IconPause = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="6" y="4" width="4" height="16" rx="2" /><rect x="14" y="4" width="4" height="16" rx="2" /></svg>;
+        const IconReplay = () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" /></svg>;
+        const IconSettings = ({ className = "w-[1.5vw] h-[1.5vw]" }) => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>;
+        const IconMaximize = ({ className = "w-[1.5vw] h-[1.5vw]" }) => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" /></svg>;
+        const IconClose = ({ className = "w-[1.5vw] h-[1.5vw]" }) => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className={className}><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>;
+        const IconTrash = ({ className = "w-[1vw] h-[1vw]" }) => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>;
+        const IconPlus = ({ className = "w-[1vw] h-[1vw]" }) => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className={className}><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>;
+        const IconMinus = ({ className = "w-[1vw] h-[1vw]" }) => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className={className}><line x1="5" y1="12" x2="19" y2="12"></line></svg>;
+        const IconSync = ({ className = "w-[1vw] h-[1vw]" }) => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M23 4v6h-6"></path><path d="M1 20v-6h6"></path><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>;
+        const IconHelp = ({ className }) => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>;
+        const IconImage = ({ className }) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>;
+
+        // --- Custom Tooltip Button Component (Portal Version) ---
+        const TooltipButton = ({ onClick, icon: Icon, label, className, position = "right" }) => {
+            const [show, setShow] = useState(false);
+            const [coords, setCoords] = useState({ top: 0, left: 0 });
+            const buttonRef = useRef(null);
+
+            const handleMouseEnter = () => {
+                if (buttonRef.current) {
+                    const rect = buttonRef.current.getBoundingClientRect();
+                    let top = 0;
+                    let left = 0;
+                    const offset = 8; // gap
+
+                    // Calculate position based on prop
+                    if (position === "top") {
+                        top = rect.top - offset;
+                        left = rect.left + rect.width / 2;
+                    } else if (position === "bottom") {
+                        top = rect.bottom + offset;
+                        left = rect.left + rect.width / 2;
+                    } else if (position === "left") {
+                        top = rect.top + rect.height / 2;
+                        left = rect.left - offset;
+                    } else { // right
+                        top = rect.top + rect.height / 2;
+                        left = rect.right + offset;
+                    }
+
+                    setCoords({ top, left });
+                    setShow(true);
+                }
+            };
+
+            return (
+                <>
+                    <button
+                        ref={buttonRef}
+                        onClick={onClick}
+                        className={className}
+                        onMouseEnter={handleMouseEnter}
+                        onMouseLeave={() => setShow(false)}
+                    >
+                        <Icon />
+                    </button>
+                    {show && ReactDOM.createPortal(
+                        <div
+                            className="fixed z-[9999] px-3 py-1.5 text-xs font-bold text-[#684E32] bg-white border-2 border-[#F7C902] rounded-xl shadow-lg pointer-events-none transition-opacity duration-200"
+                            style={{
+                                top: coords.top,
+                                left: coords.left,
+                                transform: position === "top" ? "translate(-50%, -100%)" :
+                                    position === "bottom" ? "translate(-50%, 0)" :
+                                        position === "left" ? "translate(-100%, -50%)" :
+                                            "translate(0, -50%)" // right
+                            }}
+                        >
+                            {label}
+                        </div>,
+                        document.body
+                    )}
+                </>
+            );
+        };
+
+        // --- Hooks ---
+        const useSystemTime = () => {
+            const [now, setNow] = useState(new Date());
+            const [offset, setOffset] = useState(() => {
+                const saved = localStorage.getItem('exam_clock_offset');
+                return saved ? parseInt(saved, 10) : 0;
+            });
+
+            useEffect(() => {
+                const timer = setInterval(() => setNow(new Date()), 1000);
+                return () => clearInterval(timer);
+            }, []);
+
+            useEffect(() => {
+                localStorage.setItem('exam_clock_offset', offset);
+            }, [offset]);
+
+            const adjustedNow = useMemo(() => new Date(now.getTime() + offset), [now, offset]);
+            const resetTime = () => setOffset(0);
+
+            return { adjustedNow, resetTime };
+        };
+
+        const useScheduleStatus = (currentTime, schedule, extensions) => {
+            return useMemo(() => {
+                const currentMs = currentTime.getHours() * 3600000 + currentTime.getMinutes() * 60000 + currentTime.getSeconds() * 1000;
+
+                let activeSlot = null;
+                for (let slot of schedule) {
+                    const startMs = parseTime(slot.start);
+                    const extensionMs = extensions[slot.id] || 0;
+                    const endMs = parseTime(slot.end) + extensionMs;
+
+                    if (currentMs >= startMs && currentMs < endMs) {
+                        activeSlot = { ...slot, startMs, endMs, durationMs: endMs - startMs, extensionMs };
+                        break;
+                    }
+                }
+
+                if (activeSlot) {
+                    const elapsedMs = currentMs - activeSlot.startMs;
+                    const remainingMs = activeSlot.durationMs - elapsedMs;
+                    const progressPercent = Math.min(100, Math.max(0, (elapsedMs / activeSlot.durationMs) * 100));
+
+                    // Duggee Status Colors
+                    let color = 'bg-[#85C441]'; // Happy Green
+                    let statusText = `${activeSlot.subject || '本節'} 進行中`;
+                    let title = "考試進行中";
+
+                    if (remainingMs <= 10 * 60000) {
+                        color = 'bg-[#FF8CA1]'; // Norrie Pink (Alert)
+                        statusText = "考試即將結束"; // Modified text
+                        title = "快要結束囉";
+                    } else if (remainingMs <= (activeSlot.durationMs - activeSlot.extensionMs) / 2) {
+                        color = 'bg-[#F7C902]'; // Duggee Yellow
+                        statusText = "時間過半，加油";
+                        title = "加油加油";
+                    }
+
+                    if (activeSlot.extensionMs > 0) {
+                        statusText = `延長時間 (+${Math.round(activeSlot.extensionMs / 60000)}分)`;
+                    } else if (activeSlot.extensionMs < 0) {
+                        statusText = `縮短時間 (${Math.round(activeSlot.extensionMs / 60000)}分)`;
+                    }
+
+                    return {
+                        mode: 'ACTIVE',
+                        slot: activeSlot,
+                        remainingMs,
+                        progress: progressPercent,
+                        remainingPercent: 100 - progressPercent,
+                        statusText,
+                        title,
+                        color
+                    };
+                }
+
+                for (let slot of schedule) {
+                    const extensionMs = extensions[slot.id] || 0;
+                    const endMs = parseTime(slot.end) + extensionMs;
+                    const freezeEndMs = endMs + 5 * 60000;
+
+                    if (currentMs >= endMs && currentMs < freezeEndMs) {
+                        return {
+                            mode: 'ACTIVE',
+                            slot: slot,
+                            remainingMs: 0,
+                            progress: 100,
+                            remainingPercent: 0,
+                            statusText: "考試結束 (緩衝期)",
+                            title: "筆放下",
+                            color: 'bg-[#FF6B6B]'
+                        };
+                    }
+                }
+
+                const nextSlot = schedule.find(slot => parseTime(slot.start) > currentMs);
+
+                if (nextSlot) {
+                    const nextStartMs = parseTime(nextSlot.start);
+                    const remainingMs = nextStartMs - currentMs;
+
+                    return {
+                        mode: 'WAITING',
+                        slot: nextSlot,
+                        remainingMs,
+                        progress: 0,
+                        remainingPercent: 100,
+                        statusText: `即將開始：${nextSlot.subject}`,
+                        title: "準備考試",
+                        color: 'bg-[#5BC2E7]' // Tag Blue
+                    };
+                }
+
+                return {
+                    mode: 'FINISHED',
+                    slot: null,
+                    remainingMs: 0,
+                    progress: 0,
+                    remainingPercent: 0,
+                    statusText: "今日行程結束",
+                    title: "再見！",
+                    color: 'bg-[#E2E8F0]'
+                };
+
+            }, [currentTime, schedule, extensions]);
+        };
+
+        // --- SettingsModal ---
+        const SettingsModal = ({ isOpen, onClose, schedule, setSchedule, examData, setExamData, setIdleImage, idleImage }) => {
+            const [activeTab, setActiveTab] = useState('schedule');
+            const [localSchedule, setLocalSchedule] = useState(schedule);
+            const [localExamData, setLocalExamData] = useState(examData);
+            const imageInputRef = useRef(null);
+
+            useEffect(() => {
+                if (isOpen) {
+                    setLocalSchedule(JSON.parse(JSON.stringify(schedule)));
+                    setLocalExamData({ ...examData });
+                }
+            }, [isOpen]);
+
+            const handleSave = () => {
+                setSchedule(localSchedule);
+                setExamData(localExamData);
+                onClose();
+            };
+
+            const handleScheduleChange = (index, field, value) => {
+                const newSchedule = [...localSchedule];
+                newSchedule[index] = { ...newSchedule[index], [field]: value };
+                setLocalSchedule(newSchedule);
+            };
+
+            const addScheduleRow = () => {
+                const newId = Math.random().toString(36).substr(2, 9);
+                setLocalSchedule([...localSchedule, { id: newId, type: 'exam', start: '00:00', end: '00:00', label: '', subject: '' }]);
+            };
+
+            const removeScheduleRow = (index) => {
+                const newSchedule = localSchedule.filter((_, i) => i !== index);
+                setLocalSchedule(newSchedule);
+            };
+
+            const handleImageUpload = (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onloadend = () => {
+                        setIdleImage(reader.result);
+                    };
+                    reader.readAsDataURL(file);
+                }
+            };
+
+            if (!isOpen) return null;
+
+            return (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#684E32]/40 backdrop-blur-sm p-4">
+                    <div className="bg-[#FFF9E6] rounded-[2rem] shadow-2xl w-full max-w-5xl h-[90vh] flex flex-col overflow-hidden modal-animate border-4 border-[#F7C902]">
+                        <div className="px-8 py-5 border-b-2 border-[#F7C902]/30 flex justify-between items-center bg-[#FFF5D7]">
+                            <h2 className="text-2xl font-black text-[#684E32] flex items-center gap-3">
+                                <span className="bg-[#F7C902] p-2 rounded-xl text-white"><IconSettings /></span>
+                                監考設定區
+                            </h2>
+                            <button onClick={onClose} className="p-2 hover:bg-[#F7C902]/20 rounded-full transition-colors text-[#684E32]"><IconClose /></button>
+                        </div>
+                        <div className="flex-1 flex overflow-hidden">
+                            <div className="w-52 bg-[#FFF5D7] border-r-2 border-[#F7C902]/30 flex flex-col pt-6 gap-2 px-3">
+                                {[
+                                    { id: 'schedule', label: '時程設定' },
+                                    { id: 'attendance', label: '考場資訊' },
+                                    { id: 'background', label: '背景設定' },
+                                    { id: 'help', label: '使用說明' }
+                                ].map(tab => (
+                                    <button
+                                        key={tab.id}
+                                        onClick={() => setActiveTab(tab.id)}
+                                        className={`px-4 py-3 text-left font-bold rounded-xl transition-all ${activeTab === tab.id
+                                            ? 'bg-[#5BC2E7] text-white shadow-md transform scale-105'
+                                            : 'text-[#684E32]/70 hover:bg-[#F7C902]/20'
+                                            }`}
+                                    >
+                                        {tab.label}
+                                    </button>
+                                ))}
+                            </div>
+                            <div className="flex-1 overflow-y-auto p-8 bg-white/50">
+                                {activeTab === 'schedule' && (
+                                    <div className="space-y-6">
+                                        <div className="flex justify-between items-center mb-4">
+                                            <h3 className="text-xl font-bold text-[#684E32]">考試時程表設定</h3>
+                                            <button onClick={addScheduleRow} className="px-4 py-2 bg-[#85C441] text-white rounded-xl hover:bg-[#76b039] font-bold flex items-center gap-2 transition-all shadow-sm active:scale-95"><IconPlus className="w-4 h-4" /> 新增節次</button>
+                                        </div>
+                                        <div className="rounded-2xl overflow-hidden border-2 border-[#F7C902]/30">
+                                            <table className="w-full text-left border-collapse table-fixed">
+                                                <thead className="bg-[#F7C902]/20 text-[#684E32] text-sm uppercase">
+                                                    <tr>
+                                                        <th className="p-4">科目</th>
+                                                        <th className="p-4 w-44 text-center">開始時間</th>
+                                                        <th className="p-4 w-44 text-center">結束時間</th>
+                                                        <th className="p-4 w-20 text-center">刪除</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-[#F7C902]/20 bg-white">
+                                                    {localSchedule.length === 0 && (
+                                                        <tr>
+                                                            <td colSpan="4" className="p-8 text-center text-[#684E32]/50 font-bold text-lg">目前沒有行程，請按右上角新增！</td>
+                                                        </tr>
+                                                    )}
+                                                    {localSchedule.map((row, index) => (
+                                                        <tr key={row.id} className="hover:bg-[#FFF9E6]">
+                                                            <td className="p-3"><input type="text" value={row.subject} onChange={(e) => handleScheduleChange(index, 'subject', e.target.value)} className="w-full p-3 border-2 border-[#E2E8F0] focus:border-[#5BC2E7] rounded-xl font-bold text-[#684E32] bg-[#F8FAFC]" placeholder="輸入科目" /></td>
+                                                            <td className="p-3"><input type="time" step="60" value={row.start} onChange={(e) => handleScheduleChange(index, 'start', e.target.value)} className="w-full p-2 border-2 border-[#E2E8F0] focus:border-[#5BC2E7] rounded-xl font-mono text-center bg-[#F8FAFC]" /></td>
+                                                            <td className="p-3"><input type="time" step="60" value={row.end} onChange={(e) => handleScheduleChange(index, 'end', e.target.value)} className="w-full p-2 border-2 border-[#E2E8F0] focus:border-[#5BC2E7] rounded-xl font-mono text-center bg-[#F8FAFC]" /></td>
+                                                            <td className="p-3 text-center"><button onClick={() => removeScheduleRow(index)} className="p-2 text-[#FF8CA1] hover:text-white hover:bg-[#FF8CA1] rounded-xl transition-colors"><IconTrash /></button></td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+                                {activeTab === 'attendance' && (
+                                    <div className="max-w-2xl mx-auto space-y-8 py-8">
+                                        <div className="bg-[#5BC2E7]/10 p-8 rounded-3xl border-2 border-[#5BC2E7]/30">
+                                            <h3 className="text-xl font-bold text-[#5BC2E7] mb-6 flex items-center gap-2"><span className="w-2 h-6 bg-[#5BC2E7] rounded-full"></span>考場人數</h3>
+                                            <div className="grid grid-cols-2 gap-8">
+                                                <div>
+                                                    <label className="block text-sm font-bold text-[#684E32] mb-3 ml-1">應到人數</label>
+                                                    <input type="number" value={localExamData.shouldArrive} onChange={(e) => setLocalExamData({ ...localExamData, shouldArrive: e.target.value })} className="w-full p-4 text-3xl font-black text-center text-[#5BC2E7] border-2 border-[#5BC2E7]/30 rounded-2xl focus:border-[#5BC2E7] outline-none bg-white shadow-sm" />
+                                                </div>
+                                                <div>
+                                                    <label className="block text-sm font-bold text-[#85C441] mb-3 ml-1">實到人數</label>
+                                                    <input type="number" value={localExamData.actualArrive} onChange={(e) => setLocalExamData({ ...localExamData, actualArrive: e.target.value })} className="w-full p-4 text-3xl font-black text-center text-[#85C441] border-2 border-[#85C441]/30 rounded-2xl focus:border-[#85C441] outline-none bg-white shadow-sm" />
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="bg-[#FF8CA1]/10 p-8 rounded-3xl border-2 border-[#FF8CA1]/30">
+                                            <h3 className="text-xl font-bold text-[#FF8CA1] mb-4 flex items-center gap-2"><span className="w-2 h-6 bg-[#FF8CA1] rounded-full"></span>缺考/備註</h3>
+                                            <textarea value={localExamData.absentList} onChange={(e) => setLocalExamData({ ...localExamData, absentList: e.target.value })} className="w-full h-32 p-4 text-xl font-bold text-[#FF8CA1] border-2 border-[#FF8CA1]/30 rounded-2xl focus:border-[#FF8CA1] outline-none resize-none bg-white shadow-sm" placeholder="輸入座號..." />
+                                        </div>
+                                    </div>
+                                )}
+                                {activeTab === 'background' && (
+                                    <div className="max-w-2xl mx-auto py-8">
+                                        <div className="bg-[#FFF9E6] p-8 rounded-3xl border-2 border-[#F7C902]/20 text-center">
+                                            <h3 className="text-xl font-black text-[#684E32] mb-4">閒置畫面設定</h3>
+                                            <p className="text-[#684E32]/70 mb-6">當沒有在考試時（等待中或結束），右側看板會顯示這張圖片。</p>
+
+                                            <input type="file" accept="image/*" ref={imageInputRef} onChange={handleImageUpload} className="hidden" />
+
+                                            <div className="flex flex-col items-center gap-4">
+                                                <div
+                                                    className="w-64 h-40 bg-gray-100 rounded-2xl border-2 border-dashed border-[#684E32]/30 flex items-center justify-center overflow-hidden cursor-pointer hover:bg-gray-50 transition-colors"
+                                                    onClick={() => imageInputRef.current.click()}
+                                                >
+                                                    {idleImage ? (
+                                                        <img src={idleImage} alt="Preview" className="w-full h-full object-cover" />
+                                                    ) : (
+                                                        <div className="text-[#684E32]/40 font-bold flex flex-col items-center gap-2">
+                                                            <IconImage className="w-8 h-8" />
+                                                            點擊上傳圖片
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                <div className="flex gap-3">
+                                                    <button onClick={() => imageInputRef.current.click()} className="px-4 py-2 bg-[#5BC2E7] text-white rounded-xl font-bold hover:bg-[#4ab0d4] transition-colors">選擇圖片</button>
+                                                    {idleImage && <button onClick={() => setIdleImage(null)} className="px-4 py-2 bg-[#FF8CA1] text-white rounded-xl font-bold hover:bg-[#f57a90] transition-colors">清除圖片</button>}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                                {activeTab === 'help' && (
+                                    <div className="space-y-6 py-2">
+                                        <div className="bg-[#FFF9E6] p-6 rounded-3xl border-2 border-[#F7C902]/20">
+                                            <h3 className="text-xl font-black text-[#684E32] mb-3">🐶 歡迎來到阿奇監考儀表板！</h3>
+                                            <p className="text-[#684E32]/80 leading-relaxed">
+                                                這是一個專為老師設計的可愛風格監考計時工具。無論是段考、英聽測驗或日常小考，都能輕鬆掌控時間！
+                                            </p>
+                                        </div>
+
+                                        {/* 快速開始 */}
+                                        <div className="bg-gradient-to-r from-[#5BC2E7]/10 to-[#85C441]/10 p-5 rounded-2xl border-2 border-[#5BC2E7]/30">
+                                            <h4 className="text-lg font-black text-[#5BC2E7] mb-3 flex items-center gap-2">
+                                                <span className="text-2xl">⚡</span> 快速開始（首次使用必看）
+                                            </h4>
+                                            <ol className="space-y-2 text-sm text-[#684E32]/80 leading-relaxed ml-4">
+                                                <li><strong>1.</strong> 點擊左上角 ⚙️ 設定按鈕</li>
+                                                <li><strong>2.</strong> 在「時程設定」中新增考試節次（科目、開始/結束時間）</li>
+                                                <li><strong>3.</strong> 在「考場資訊」中填寫應到/實到人數</li>
+                                                <li><strong>4.</strong> 點擊「完成設定」儲存</li>
+                                                <li><strong>5.</strong> 點擊左上角 🔲 全螢幕按鈕，投影到大螢幕給學生看</li>
+                                            </ol>
+                                        </div>
+
+                                        <div className="space-y-4">
+                                            {/* 功能說明 1 */}
+                                            <div className="bg-white p-5 rounded-2xl border border-[#E2E8F0] flex gap-4">
+                                                <div className="w-10 h-10 bg-[#5BC2E7] text-white rounded-full flex items-center justify-center font-black shrink-0">1</div>
+                                                <div>
+                                                    <strong className="block text-[#5BC2E7] text-lg mb-1">設定考試時間</strong>
+                                                    <p className="text-sm text-[#684E32]/70 leading-relaxed">
+                                                        點擊左上角的 <IconSettings className="inline w-4 h-4" /> 設定按鈕，進入「時程設定」。<br />
+                                                        點擊「新增節次」，輸入科目名稱（如：國語）、開始時間與結束時間。<br />
+                                                        <span className="text-[#5BC2E7] font-bold">💡 小技巧：</span> 可以在主畫面直接點擊時間欄位快速修改！
+                                                    </p>
+                                                </div>
+                                            </div>
+
+                                            {/* 功能說明 2 */}
+                                            <div className="bg-white p-5 rounded-2xl border border-[#E2E8F0] flex gap-4">
+                                                <div className="w-10 h-10 bg-[#85C441] text-white rounded-full flex items-center justify-center font-black shrink-0">2</div>
+                                                <div>
+                                                    <strong className="block text-[#85C441] text-lg mb-1">播放英聽/音樂</strong>
+                                                    <p className="text-sm text-[#684E32]/70 leading-relaxed">
+                                                        在主畫面的科目列表右側，點擊 <IconUpload className="inline w-4 h-4" /> 按鈕上傳音訊檔。<br />
+                                                        上傳後會出現播放器，您可以播放、暫停，或是直接拖曳進度條到想聽的地方。<br />
+                                                        <span className="text-[#85C441] font-bold">💡 小技巧：</span> 支援 MP3、WAV 等常見音訊格式！
+                                                    </p>
+                                                </div>
+                                            </div>
+
+                                            {/* 功能說明 3 */}
+                                            <div className="bg-white p-5 rounded-2xl border border-[#E2E8F0] flex gap-4">
+                                                <div className="w-10 h-10 bg-[#F7C902] text-white rounded-full flex items-center justify-center font-black shrink-0">3</div>
+                                                <div>
+                                                    <strong className="block text-[#F7C902] text-lg mb-1">考試中的時間控制</strong>
+                                                    <p className="text-sm text-[#684E32]/70 leading-relaxed">
+                                                        當考試正在進行時，右側大看板會顯示倒數計時。<br />
+                                                        如需延長或縮短時間，點擊看板下方的 <span className="inline-block bg-[#85C441] text-white text-xs px-2 py-0.5 rounded font-bold">+1</span> <span className="inline-block bg-[#85C441] text-white text-xs px-2 py-0.5 rounded font-bold">+5</span> <span className="inline-block bg-[#85C441] text-white text-xs px-2 py-0.5 rounded font-bold">+10</span> 或 <span className="inline-block bg-[#FF8CA1] text-white text-xs px-2 py-0.5 rounded font-bold">-1</span> <span className="inline-block bg-[#FF8CA1] text-white text-xs px-2 py-0.5 rounded font-bold">-5</span> <span className="inline-block bg-[#FF8CA1] text-white text-xs px-2 py-0.5 rounded font-bold">-10</span> 按鈕。<br />
+                                                        <span className="text-[#F7C902] font-bold">💡 小技巧：</span> 按鈕會常駐顯示，方便您隨時調整！
+                                                    </p>
+                                                </div>
+                                            </div>
+
+                                            {/* 功能說明 4 - 顏色指示 */}
+                                            <div className="bg-white p-5 rounded-2xl border border-[#E2E8F0] flex gap-4">
+                                                <div className="w-10 h-10 bg-[#9F7AEA] text-white rounded-full flex items-center justify-center font-black shrink-0">4</div>
+                                                <div className="w-full">
+                                                    <strong className="block text-[#9F7AEA] text-lg mb-2">顏色指示說明</strong>
+                                                    <div className="space-y-2 text-sm">
+                                                        <div className="flex items-center gap-2">
+                                                            <div className="w-4 h-4 bg-[#85C441] rounded"></div>
+                                                            <span className="text-[#684E32]/70"><strong className="text-[#85C441]">綠色</strong> - 考試進行中，時間充裕</span>
+                                                        </div>
+                                                        <div className="flex items-center gap-2">
+                                                            <div className="w-4 h-4 bg-[#F7C902] rounded"></div>
+                                                            <span className="text-[#684E32]/70"><strong className="text-[#F7C902]">黃色</strong> - 時間過半，請注意時間</span>
+                                                        </div>
+                                                        <div className="flex items-center gap-2">
+                                                            <div className="w-4 h-4 bg-[#FF8CA1] rounded"></div>
+                                                            <span className="text-[#684E32]/70"><strong className="text-[#FF8CA1]">粉紅</strong> - 剩餘不到 10 分鐘，即將結束</span>
+                                                        </div>
+                                                        <div className="flex items-center gap-2">
+                                                            <div className="w-4 h-4 bg-[#5BC2E7] rounded"></div>
+                                                            <span className="text-[#684E32]/70"><strong className="text-[#5BC2E7]">藍色</strong> - 等待下一節考試</span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* 功能說明 5 - 其他功能 */}
+                                            <div className="bg-white p-5 rounded-2xl border border-[#E2E8F0] flex gap-4">
+                                                <div className="w-10 h-10 bg-[#FF8CA1] text-white rounded-full flex items-center justify-center font-black shrink-0">5</div>
+                                                <div>
+                                                    <strong className="block text-[#FF8CA1] text-lg mb-1">其他實用功能</strong>
+                                                    <p className="text-sm text-[#684E32]/70 leading-relaxed space-y-1">
+                                                        <span className="block"><strong>📸 背景圖片：</strong> 在設定的「背景設定」中上傳圖片。非考試期間會顯示您上傳的圖片（如校徽、標語等）。圖片會等比例縮放，不會被裁切。</span>
+                                                        <span className="block"><strong>🔲 全螢幕：</strong> 點擊左上角的 <IconMaximize className="inline w-4 h-4" /> 可以進入全螢幕模式，適合投影到大螢幕。再按一次 ESC 鍵即可退出。</span>
+                                                        <span className="block"><strong>🔄 時間校正：</strong> 如果覺得時間不準，點擊時間旁的 <IconSync className="inline w-3 h-3" /> 圖示重置為系統時間。</span>
+                                                        <span className="block"><strong>👥 考場資訊：</strong> 在設定中填寫應到/實到人數和缺考座號，方便記錄。</span>
+                                                    </p>
+                                                </div>
+                                            </div>
+
+                                            {/* 常見問題 */}
+                                            <div className="bg-gradient-to-r from-[#FF8CA1]/10 to-[#9F7AEA]/10 p-5 rounded-2xl border-2 border-[#FF8CA1]/30">
+                                                <h4 className="text-lg font-black text-[#FF8CA1] mb-3 flex items-center gap-2">
+                                                    <span className="text-2xl">❓</span> 常見問題
+                                                </h4>
+                                                <div className="space-y-3 text-sm text-[#684E32]/80">
+                                                    <div>
+                                                        <strong className="text-[#684E32]">Q: 我的設定會被保存嗎？</strong>
+                                                        <p className="ml-4 mt-1">A: 會的！所有設定（時程、考場資訊、背景圖片）都會自動儲存在瀏覽器中，下次開啟會自動載入。</p>
+                                                    </div>
+                                                    <div>
+                                                        <strong className="text-[#684E32]">Q: 可以在考試中途修改時間嗎？</strong>
+                                                        <p className="ml-4 mt-1">A: 可以！使用 +/- 按鈕即時調整，或是回到設定修改結束時間。</p>
+                                                    </div>
+                                                    <div>
+                                                        <strong className="text-[#684E32]">Q: 音訊檔案會被保存嗎？</strong>
+                                                        <p className="ml-4 mt-1">A: 音訊檔案不會保存，每次需要重新上傳。建議將常用音檔存在電腦固定位置。</p>
+                                                    </div>
+                                                    <div>
+                                                        <strong className="text-[#684E32]">Q: 如何清除所有設定？</strong>
+                                                        <p className="ml-4 mt-1">A: 在瀏覽器中清除此網站的 Cookie 和網站資料即可重置。</p>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* 資料儲存說明 */}
+                                            <div className="bg-[#FFF9E6] p-5 rounded-2xl border-2 border-[#F7C902]/30">
+                                                <h4 className="text-lg font-black text-[#F7C902] mb-2 flex items-center gap-2">
+                                                    <span className="text-2xl">💾</span> 資料儲存說明
+                                                </h4>
+                                                <p className="text-sm text-[#684E32]/80 leading-relaxed">
+                                                    本系統使用瀏覽器的 <strong>localStorage</strong> 技術儲存您的設定，所有資料都保存在您的電腦上，不會上傳到任何伺服器。
+                                                    請注意：如果更換瀏覽器或清除瀏覽器資料，設定將會遺失。建議定期截圖保存重要設定。
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                        <div className="px-8 py-5 border-t-2 border-[#F7C902]/30 bg-[#FFF5D7] flex justify-end gap-4">
+                            <button onClick={onClose} className="px-6 py-3 rounded-2xl font-bold text-[#684E32]/60 hover:bg-[#F7C902]/10 transition-colors">取消</button>
+                            <button onClick={handleSave} className="px-8 py-3 rounded-2xl font-bold bg-[#F7C902] text-[#684E32] shadow-lg hover:shadow-xl hover:bg-[#E6BC02] transition-all transform hover:-translate-y-1 cartoon-shadow">完成設定</button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- ClockPanel ---
+        const ClockPanel = ({ time, onReset, onOpenSettings }) => {
+            const toggleFullscreen = () => {
+                if (!document.fullscreenElement) {
+                    document.documentElement.requestFullscreen().catch(e => console.error(e));
+                } else {
+                    if (document.exitFullscreen) document.exitFullscreen();
+                }
+            };
+
+            return (
+                <div className="h-full flex items-center justify-center relative bg-[#F7C902] select-none border-r-4 border-white/20">
+                    <div className="flex items-stretch gap-6">
+                        <div className="flex flex-col justify-center gap-2 py-2">
+                            <TooltipButton onClick={onOpenSettings} icon={IconSettings} label="設定" className="p-3 bg-white/20 text-[#684E32] hover:bg-white/40 rounded-2xl transition-all" position="right" />
+                            <TooltipButton onClick={toggleFullscreen} icon={IconMaximize} label="全螢幕" className="p-3 bg-white/20 text-[#684E32] hover:bg-white/40 rounded-2xl transition-all" position="right" />
+                        </div>
+
+                        <div className="flex flex-col justify-center group relative pl-6 border-l-2 border-[#684E32]/10 items-start">
+                            <div className="flex items-center gap-2 mb-1">
+                                <div className="text-[0.8vw] text-[#684E32]/60 font-black tracking-widest">CURRENT TIME</div>
+                                <TooltipButton onClick={onReset} icon={IconSync} label="校正" className="text-[#684E32]/40 hover:text-[#684E32] transition-colors scale-75" position="top" />
+                            </div>
+                            <div className="text-[3.5vw] font-black text-[#684E32] tabular-nums tracking-tighter leading-none text-left drop-shadow-sm">
+                                {formatTime(time)}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const SubjectPanel = ({ status }) => {
+            let subjectName = "無考試";
+            let subText = "休息一下";
+            if (status.mode === 'ACTIVE') {
+                subjectName = status.slot.subject;
+                subText = "正在進行";
+            } else if (status.mode === 'WAITING') {
+                subjectName = status.slot.subject;
+                subText = "下一節";
+            } else if (status.mode === 'FINISHED') {
+                subjectName = "今日結束";
+                subText = "辛苦了";
+            }
+            return (
+                <div className="h-full w-full flex flex-col items-center justify-center relative bg-[#FFF9E6] p-6">
+                    <div className="text-[1.5vw] font-bold text-[#684E32]/40 mb-2 tracking-widest uppercase">{subText}</div>
+                    <div className="text-[4vw] font-black text-[#684E32] tracking-wide drop-shadow-sm">{subjectName}</div>
+                </div>
+            );
+        };
+
+        // --- CustomAudioScrubber (Duggee Style) ---
+        const CustomAudioScrubber = ({ duration, currentTime, onSeek, fileName }) => {
+            const containerRef = useRef(null);
+            const [isDragging, setIsDragging] = useState(false);
+            const [localTime, setLocalTime] = useState(0);
+            const [hoverTime, setHoverTime] = useState(null);
+            const [hoverPos, setHoverPos] = useState(0);
+            const [showNameTooltip, setShowNameTooltip] = useState(false);
+            const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
+            const nameContainerRef = useRef(null);
+
+            useEffect(() => {
+                if (!isDragging) {
+                    setLocalTime(currentTime);
+                }
+            }, [currentTime, isDragging]);
+
+            const calculateTime = useCallback((e) => {
+                if (!containerRef.current || !duration) return 0;
+                const rect = containerRef.current.getBoundingClientRect();
+                const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                const x = Math.max(0, Math.min(clientX - rect.left, rect.width));
+                return (x / rect.width) * duration;
+            }, [duration]);
+
+            const handleStart = (e) => {
+                e.preventDefault();
+                setIsDragging(true);
+                if (e.target.setPointerCapture && e.pointerId) e.target.setPointerCapture(e.pointerId);
+                const newTime = calculateTime(e);
+                setLocalTime(newTime);
+                onSeek(newTime);
+            };
+
+            const handleMove = (e) => {
+                if (containerRef.current && duration) {
+                    const rect = containerRef.current.getBoundingClientRect();
+                    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                    const x = clientX - rect.left;
+                    if (x >= 0 && x <= rect.width) {
+                        setHoverPos(x);
+                        setHoverTime((x / rect.width) * duration);
+                    } else {
+                        setHoverTime(null);
+                    }
+                }
+                if (isDragging) {
+                    const newTime = calculateTime(e);
+                    setLocalTime(newTime);
+                    onSeek(newTime);
+                }
+            };
+
+            const handleEnd = () => { if (isDragging) setIsDragging(false); };
+            const handleLeave = () => { if (!isDragging) setHoverTime(null); };
+
+            const handleNameMouseEnter = () => {
+                if (nameContainerRef.current) {
+                    const rect = nameContainerRef.current.getBoundingClientRect();
+                    setTooltipPos({ x: rect.left + rect.width / 2, y: rect.top });
+                    setShowNameTooltip(true);
+                }
+            };
+
+            const percent = duration ? (localTime / duration) * 100 : 0;
+
+            return (
+                <div className="w-full flex flex-col gap-1.5">
+                    <div className="flex justify-between text-[11px] text-[#684E32]/60 font-bold font-mono px-1">
+                        <span>{formatAudioTime(isDragging ? localTime : currentTime)}</span>
+                        <span>{formatAudioTime(duration)}</span>
+                    </div>
+
+                    <div
+                        ref={containerRef}
+                        className="relative w-full h-5 group cursor-pointer flex items-center"
+                        onPointerDown={handleStart}
+                        onPointerMove={handleMove}
+                        onPointerUp={handleEnd}
+                        onPointerLeave={handleLeave}
+                        onPointerCancel={handleEnd}
+                    >
+                        {/* Track */}
+                        <div className="absolute w-full h-3 bg-[#E2E8F0] rounded-full pointer-events-none overflow-hidden shadow-inner border border-[#CBD5E0]">
+                            <div className="h-full bg-[#5BC2E7] rounded-full" style={{ width: `${percent}%` }}></div>
+                        </div>
+                        {/* Thumb */}
+                        <div className="absolute h-5 w-5 bg-[#F7C902] border-2 border-white rounded-full shadow-md transform -translate-x-1/2 pointer-events-none transition-transform group-hover:scale-110" style={{ left: `${percent}%` }}></div>
+                        {hoverTime !== null && duration > 0 && (
+                            <div className="absolute -top-7 transform -translate-x-1/2 bg-[#684E32] text-white text-[10px] px-2 py-1 rounded-lg font-bold shadow-sm pointer-events-none z-20 whitespace-nowrap" style={{ left: hoverPos }}>
+                                {formatAudioTime(hoverTime)}
+                            </div>
+                        )}
+                    </div>
+
+                    <div
+                        ref={nameContainerRef}
+                        className="w-full h-4 relative mt-0.5 overflow-hidden"
+                        onMouseEnter={handleNameMouseEnter}
+                        onMouseLeave={() => setShowNameTooltip(false)}
+                    >
+                        <div className="text-[11px] text-[#684E32]/50 whitespace-nowrap truncate w-full cursor-default text-center">
+                            {fileName}
+                        </div>
+                    </div>
+
+                    {showNameTooltip && ReactDOM.createPortal(
+                        <div
+                            className="fixed z-[9999] transform -translate-x-1/2 -translate-y-full whitespace-nowrap px-3 py-1.5 text-xs font-bold text-[#684E32] bg-white border-2 border-[#F7C902] rounded-xl shadow-lg pointer-events-none mb-2"
+                            style={{ top: tooltipPos.y, left: tooltipPos.x }}
+                        >
+                            {fileName}
+                        </div>,
+                        document.body
+                    )}
+                </div>
+            );
+        };
+
+        const ScheduleRow = ({ slot, status, onSubjectChange, onTimeChange, onAudioRemove, audioState, onAudioUpload, onPlayPause, onReplay, onSeek }) => {
+            const fileInputRef = useRef(null);
+
+            const isActiveRow = status.slot && status.slot.id === slot.id;
+            const isWaitingRow = status.mode === 'WAITING' && isActiveRow;
+            const isRunningRow = status.mode === 'ACTIVE' && isActiveRow;
+
+            // 卡片樣式邏輯
+            let rowClass = 'bg-white border-2 border-transparent hover:border-[#F7C902]/30';
+            let shadowClass = 'shadow-sm';
+
+            if (isRunningRow) {
+                rowClass = 'bg-[#FFF9E6] border-2 border-[#85C441]'; // Happy Green Border
+                shadowClass = 'cartoon-shadow';
+            } else if (isWaitingRow) {
+                rowClass = 'bg-[#EBF8FF] border-2 border-[#5BC2E7]'; // Tag Blue Border
+                shadowClass = 'shadow-md';
+            }
+
+            return (
+                <div className={`relative flex items-center gap-4 px-5 py-4 mb-3 rounded-2xl transition-all duration-300 ${rowClass} ${shadowClass}`}>
+                    {/* Time Inputs */}
+                    <div className="flex flex-col items-center justify-center w-32 shrink-0 gap-1 bg-[#F8FAFC] rounded-xl p-2 border border-[#E2E8F0]">
+                        <input
+                            type="time"
+                            step="60"
+                            value={slot.start}
+                            onClick={(e) => e.target.showPicker && e.target.showPicker()}
+                            onChange={(e) => onTimeChange('start', e.target.value)}
+                            className="dashboard-time-input text-lg font-bold text-[#684E32] font-mono tracking-tight bg-transparent text-center w-full outline-none cursor-pointer p-0 border-none"
+                        />
+                        <div className="w-8 h-0.5 bg-[#E2E8F0]"></div>
+                        <input
+                            type="time"
+                            step="60"
+                            value={slot.end}
+                            onClick={(e) => e.target.showPicker && e.target.showPicker()}
+                            onChange={(e) => onTimeChange('end', e.target.value)}
+                            className="dashboard-time-input text-lg font-bold text-[#684E32] font-mono tracking-tight bg-transparent text-center w-full outline-none cursor-pointer p-0 border-none"
+                        />
+                    </div>
+
+                    {/* Subject Input */}
+                    <div className="flex-1 relative">
+                        <input type="text" value={slot.subject} onChange={(e) => onSubjectChange(e.target.value)} className={`w-full text-2xl font-black bg-transparent border-none outline-none transition-colors placeholder-[#E2E8F0] ${isActiveRow ? 'text-[#684E32]' : 'text-[#684E32]/70'}`} placeholder="科目名稱" />
+                    </div>
+
+                    {/* Audio Controls */}
+                    <div className="flex flex-col items-end gap-1 w-48 shrink-0">
+                        <input type="file" accept="audio/*" ref={fileInputRef} onChange={(e) => onAudioUpload(e.target.files[0])} className="hidden-input" />
+
+                        <div className={`relative flex items-center w-full mb-1 h-8 ${!audioState.hasFile ? 'justify-end' : ''}`}>
+                            {audioState.hasFile ? (
+                                <>
+                                    <div className="absolute -left-2 flex gap-1">
+                                        <TooltipButton
+                                            onClick={() => { fileInputRef.current.value = null; fileInputRef.current.click(); }}
+                                            icon={IconUpload}
+                                            label="換檔"
+                                            className="w-7 h-7 flex items-center justify-center text-[#5BC2E7] hover:bg-[#5BC2E7] hover:text-white rounded-full transition-colors"
+                                            position="top"
+                                        />
+                                        <TooltipButton
+                                            onClick={onAudioRemove}
+                                            icon={IconTrash}
+                                            label="刪除"
+                                            className="w-7 h-7 flex items-center justify-center text-[#FF8CA1] hover:bg-[#FF8CA1] hover:text-white rounded-full transition-colors"
+                                            position="top"
+                                        />
+                                    </div>
+
+                                    <div className="absolute left-1/2 transform -translate-x-1/2">
+                                        <button onClick={onPlayPause} className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-sm font-black text-white shadow-sm transition-transform active:scale-95 ${audioState.isPlaying ? 'bg-[#F6AD55]' : 'bg-[#48BB78]'}`}>
+                                            {audioState.isPlaying ? <><IconPause /> 暫停</> : <><IconPlay /> 播放</>}
+                                        </button>
+                                    </div>
+
+                                    <div className="absolute right-0">
+                                        <TooltipButton
+                                            onClick={onReplay}
+                                            icon={IconReplay}
+                                            label="重播"
+                                            className="w-7 h-7 flex items-center justify-center text-[#684E32]/50 hover:bg-[#684E32]/10 rounded-full transition-colors"
+                                            position="top"
+                                        />
+                                    </div>
+                                </>
+                            ) : (
+                                <button onClick={() => { fileInputRef.current.value = null; fileInputRef.current.click(); }} className="flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-bold text-[#5BC2E7] bg-[#5BC2E7]/10 hover:bg-[#5BC2E7] hover:text-white transition-colors">
+                                    <IconUpload className="w-4 h-4" /> 上傳音訊
+                                </button>
+                            )}
+                        </div>
+
+                        {audioState.hasFile && (
+                            <CustomAudioScrubber
+                                duration={audioState.duration}
+                                currentTime={audioState.currentTime}
+                                fileName={audioState.fileName}
+                                onSeek={onSeek}
+                            />
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        const StatBox = ({ label, value, color, onChange, isTextArea = false }) => (
+            <div className="flex flex-col items-center justify-start pt-5 px-4 pb-2 flex-1 relative first:border-r-2 last:border-l-2 border-[#684E32]/5">
+                <span className="text-sm font-bold mb-2 text-[#684E32]/60 bg-white/50 px-3 py-1 rounded-full">{label}</span>
+                <div className="w-full flex-1 flex items-center justify-center">
+                    {isTextArea ? (
+                        <textarea
+                            value={value}
+                            onChange={(e) => onChange(e.target.value)}
+                            className="w-full h-full text-center bg-transparent text-xl font-bold outline-none resize-none placeholder-[#FF8CA1]/50 text-[#FF8CA1]"
+                            placeholder="無"
+                        />
+                    ) : (
+                        <input
+                            type="number"
+                            value={value}
+                            onChange={(e) => onChange(e.target.value)}
+                            className="w-full text-center bg-transparent text-5xl font-black outline-none placeholder-[#684E32]/10"
+                            style={{ color: color }}
+                            placeholder="-"
+                        />
+                    )}
+                </div>
+            </div>
+        );
+
+        const CountdownPanel = ({ status, onExtend, idleImage }) => {
+            if (status.mode !== 'ACTIVE' && idleImage) {
+                return (
+                    <div className="w-full h-full bg-[#E2E8F0] flex flex-col items-center justify-center relative overflow-hidden">
+                        <img src={idleImage} alt="Waiting" className="absolute inset-0 w-full h-full object-contain" />
+                    </div>
+                );
+            }
+
+            if (status.mode === 'FINISHED') {
+                return (
+                    <div className="w-full h-full bg-[#E2E8F0] flex flex-col items-center justify-center relative overflow-hidden">
+                        <div className="text-8xl mb-4 opacity-50">🐶</div>
+                        <h2 className="text-3xl font-black text-[#684E32]/50 mb-4 z-10">大家做得好！</h2>
+                        <div className="text-lg text-[#684E32]/40 z-10 font-bold"></div>
+                    </div>
+                );
+            }
+
+            if (!status.slot) {
+                return (
+                    <div className="w-full h-full bg-[#F8FAFC] flex flex-col items-center justify-center relative overflow-hidden">
+                        <div className="text-2xl font-bold text-[#684E32]/30">等待時程開始...</div>
+                    </div>
+                );
+            }
+
+            let timerColor = "text-[#684E32]";
+            let timerBg = "bg-[#FFF9E6]";
+            let labelColor = "text-[#684E32]";
+            let labelBg = "bg-[#F7C902]";
+
+            if (status.mode === 'WAITING') {
+                labelBg = "bg-[#5BC2E7]";
+                labelColor = "text-white";
+                timerBg = "bg-[#EBF8FF]";
+                timerColor = "text-[#5BC2E7]";
+            } else {
+                // Active
+                timerBg = "bg-[#F0FFF4]";
+                labelBg = "bg-[#85C441]";
+                labelColor = "text-white";
+
+                if (status.remainingMs < 10 * 60000) {
+                    timerColor = "text-[#FF8CA1]";
+                    labelBg = "bg-[#FF8CA1]";
+                    timerBg = "bg-[#FFF5F7]";
+                } else if (status.remainingMs < (status.slot.durationMs - status.slot.extensionMs) / 2) {
+                    timerColor = "text-[#F6AD55]";
+                    labelBg = "bg-[#F7C902]";
+                    timerBg = "bg-[#FFFDE7]";
+                }
+                if (status.remainingMs === 0) {
+                    timerColor = "text-[#FF6B6B]";
+                    labelBg = "bg-[#FF6B6B]";
+                }
+            }
+
+            return (
+                <div className={`w-full h-full flex flex-col relative overflow-hidden ${timerBg} transition-colors duration-500`}>
+                    <div className={`absolute top-0 left-0 px-[2vw] py-[1.5vh] text-[2vw] font-black rounded-br-[3rem] shadow-sm z-20 ${labelBg} ${labelColor} transition-colors duration-500`}>
+                        {status.title}
+                    </div>
+
+                    <div className="flex-1 flex flex-col items-center justify-center relative z-10 mt-10">
+                        {/* 倒數計時 */}
+                        <div className={`text-[13vw] font-black leading-none font-mono-timer tracking-tighter drop-shadow-sm ${timerColor} transition-colors duration-500`}>
+                            {formatCountdown(status.remainingMs)}
+                        </div>
+
+                        {/* 狀態文字 */}
+                        <div className={`mt-2 text-[1.5vw] font-bold opacity-80 ${timerColor}`}>{status.statusText}</div>
+
+                        {/* 常駐顯示的加減時按鈕 */}
+                        {status.mode === 'ACTIVE' && (
+                            <div className="mt-8 flex gap-[1.5vw] z-30">
+                                <div className="flex gap-[0.5vw]">
+                                    {[1, 5, 10].map(m => (
+                                        <button key={m} onClick={() => onExtend(m)} className="w-[3.5vw] h-[2.5vw] bg-[#85C441] text-white font-black rounded-lg text-[1.2vw] hover:bg-[#76b039] active:scale-95 transition-all shadow-sm border-b-4 border-[#6ea033]">+{m}</button>
+                                    ))}
+                                </div>
+                                <div className="flex gap-[0.5vw]">
+                                    {[1, 5, 10].map(m => (
+                                        <button key={m} onClick={() => onExtend(-m)} className="w-[3.5vw] h-[2.5vw] bg-[#FF8CA1] text-white font-black rounded-lg text-[1.2vw] hover:bg-[#f57a90] active:scale-95 transition-all shadow-sm border-b-4 border-[#e6758a]">-{m}</button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="h-[2.5vh] w-full bg-[#E2E8F0]/50 relative mt-4">
+                        <div className={`h-full health-bar-transition`} style={{ width: `${status.remainingPercent}%`, backgroundColor: status.remainingMs < 10 * 60000 ? '#FF8CA1' : '#85C441' }}>
+                            <div className="absolute top-0 left-0 w-full h-1/3 bg-white/30"></div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const App = () => {
+            const { adjustedNow, resetTime } = useSystemTime();
+            const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+            const [config, setConfig] = useState(() => {
+                const saved = localStorage.getItem('exam_config_pro_v4');
+                return saved ? JSON.parse(saved) : { schedule: DEFAULT_SCHEDULE };
+            });
+            const [examData, setExamData] = useState(() => {
+                const saved = localStorage.getItem('exam_data_pro_v2');
+                return saved ? JSON.parse(saved) : { shouldArrive: "", actualArrive: "", absentList: "" };
+            });
+            const [idleImage, setIdleImage] = useState(() => {
+                return localStorage.getItem('exam_idle_image_v1') || null;
+            });
+            const [slotExtensions, setSlotExtensions] = useState({});
+            const { schedule } = config;
+
+            useEffect(() => { localStorage.setItem('exam_config_pro_v4', JSON.stringify(config)); }, [config]);
+            useEffect(() => { localStorage.setItem('exam_data_pro_v2', JSON.stringify(examData)); }, [examData]);
+
+            // Image persistence (with size check warning in console if too large, but simple try/catch)
+            useEffect(() => {
+                try {
+                    if (idleImage) localStorage.setItem('exam_idle_image_v1', idleImage);
+                    else localStorage.removeItem('exam_idle_image_v1');
+                } catch (e) {
+                    console.error("Image too large to save to localStorage", e);
+                }
+            }, [idleImage]);
+
+            const status = useScheduleStatus(adjustedNow, schedule, slotExtensions);
+            const [audioStates, setAudioStates] = useState({});
+            const audioRefs = useRef({});
+
+            const handleExtend = (minutes) => {
+                if (status.mode !== 'ACTIVE' || !status.slot) return;
+                const slotId = status.slot.id;
+                setSlotExtensions(prev => ({ ...prev, [slotId]: (prev[slotId] || 0) + minutes * 60000 }));
+            };
+
+            const handleAudioUpload = (id, file) => {
+                if (!file) return;
+                const url = URL.createObjectURL(file);
+                setAudioStates(prev => ({
+                    ...prev,
+                    [id]: { hasFile: true, isPlaying: false, progress: 0, src: url, currentTime: 0, duration: 0, fileName: file.name }
+                }));
+            };
+
+            const handleAudioRemove = (id) => {
+                const audio = audioRefs.current[id];
+                if (audio) {
+                    audio.pause();
+                    audio.currentTime = 0;
+                    audio.src = "";
+                }
+                if (audioStates[id]?.src) URL.revokeObjectURL(audioStates[id].src);
+                setAudioStates(prev => ({ ...prev, [id]: { hasFile: false, isPlaying: false, progress: 0, src: null, currentTime: 0, duration: 0 } }));
+            };
+
+            const toggleAudio = (id) => {
+                const audio = audioRefs.current[id];
+                if (!audio) return;
+                const isPlaying = !audioStates[id]?.isPlaying;
+                if (isPlaying) {
+                    Object.keys(audioRefs.current).forEach(key => {
+                        if (key !== id && audioStates[key]?.isPlaying) {
+                            audioRefs.current[key].pause();
+                            setAudioStates(prev => ({ ...prev, [key]: { ...prev[key], isPlaying: false } }));
+                        }
+                    });
+                    audio.play();
+                } else {
+                    audio.pause();
+                }
+                setAudioStates(prev => ({ ...prev, [id]: { ...prev[id], isPlaying } }));
+            };
+
+            const replayAudio = (id) => {
+                const audio = audioRefs.current[id];
+                if (!audio) return;
+                audio.currentTime = 0;
+                audio.play();
+                Object.keys(audioRefs.current).forEach(key => {
+                    if (key !== id && audioStates[key]?.isPlaying) {
+                        audioRefs.current[key].pause();
+                        setAudioStates(prev => ({ ...prev, [key]: { ...prev[key], isPlaying: false } }));
+                    }
+                });
+                setAudioStates(prev => ({ ...prev, [id]: { ...prev[id], isPlaying: true } }));
+            };
+
+            const handleSeek = (id, time) => {
+                const audio = audioRefs.current[id];
+                if (!audio) return;
+                if (isFinite(time)) audio.currentTime = time;
+            };
+
+            const handleAudioUpdate = (id, e) => {
+                const { currentTime, duration } = e.target;
+                const progress = duration ? (currentTime / duration) * 100 : 0;
+                setAudioStates(prev => ({ ...prev, [id]: { ...prev[id], progress, currentTime, duration } }));
+            };
+
+            const handleAudioLoadedMetadata = (id, e) => {
+                setAudioStates(prev => ({ ...prev, [id]: { ...prev[id], duration: e.target.duration } }));
+            };
+
+            const handleAudioEnded = (id) => {
+                setAudioStates(prev => ({ ...prev, [id]: { ...prev[id], isPlaying: false, progress: 0, currentTime: 0 } }));
+            };
+
+            const updateSubject = (id, newSubject) => {
+                const newSchedule = schedule.map(s => s.id === id ? { ...s, subject: newSubject } : s);
+                setConfig(prev => ({ ...prev, schedule: newSchedule }));
+            };
+
+            const updateTime = (id, field, newValue) => {
+                const newSchedule = schedule.map(s => s.id === id ? { ...s, [field]: newValue } : s);
+                setConfig(prev => ({ ...prev, schedule: newSchedule }));
+            };
+
+            return (
+                <div className="flex flex-col h-screen w-screen bg-[#FFF9E6] text-[#684E32] font-sans">
+                    <div className="h-[30vh] bg-white shadow-lg z-20 flex flex-row relative">
+                        <div className="w-[30%]">
+                            <ClockPanel time={adjustedNow} onReset={resetTime} onOpenSettings={() => setIsSettingsOpen(true)} />
+                        </div>
+                        <div className="w-[70%]">
+                            <SubjectPanel status={status} />
+                        </div>
+                        {/* Decorative Strip */}
+                        <div className="absolute bottom-0 w-full h-2 bg-gradient-to-r from-[#F7C902] via-[#85C441] to-[#5BC2E7]"></div>
+                    </div>
+                    <div className="flex-1 flex flex-row overflow-hidden">
+                        <div className="w-1/2 flex flex-col bg-white border-r-4 border-[#F7C902]/20 relative">
+                            <div className="flex-1 overflow-y-auto p-4 bg-white">
+                                {schedule.map((slot) => (
+                                    <div key={slot.id}>
+                                        <ScheduleRow
+                                            slot={slot}
+                                            status={status}
+                                            onSubjectChange={(val) => updateSubject(slot.id, val)}
+                                            onTimeChange={(field, val) => updateTime(slot.id, field, val)}
+                                            onAudioRemove={() => handleAudioRemove(slot.id)}
+                                            audioState={audioStates[slot.id] || { hasFile: false, isPlaying: false, progress: 0, currentTime: 0, duration: 0 }}
+                                            onAudioUpload={(f) => handleAudioUpload(slot.id, f)}
+                                            onPlayPause={() => toggleAudio(slot.id)}
+                                            onReplay={() => replayAudio(slot.id)}
+                                            onSeek={(time) => handleSeek(slot.id, time)}
+                                        />
+                                        <audio ref={el => audioRefs.current[slot.id] = el} src={audioStates[slot.id]?.src} onTimeUpdate={(e) => handleAudioUpdate(slot.id, e)} onLoadedMetadata={(e) => handleAudioLoadedMetadata(slot.id, e)} onEnded={() => handleAudioEnded(slot.id)} hidden />
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="h-32 bg-[#F7C902]/10 border-t-2 border-[#F7C902]/30 flex flex-row shrink-0">
+                                <StatBox label="應到人數" value={examData.shouldArrive} onChange={v => setExamData(p => ({ ...p, shouldArrive: v }))} color="#5BC2E7" />
+                                <StatBox label="實到人數" value={examData.actualArrive} onChange={v => setExamData(p => ({ ...p, actualArrive: v }))} color="#85C441" />
+                                <StatBox label="未到座號/備註" value={examData.absentList} onChange={v => setExamData(p => ({ ...p, absentList: v }))} color="#FF8CA1" isTextArea={true} />
+                            </div>
+                        </div>
+                        <div className="w-1/2 bg-[#FFF9E6]">
+                            <CountdownPanel status={status} onExtend={handleExtend} idleImage={idleImage} />
+                        </div>
+                    </div>
+                    <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} schedule={schedule} setSchedule={(newSch) => setConfig(prev => ({ ...prev, schedule: newSch }))} examData={examData} setExamData={setExamData} setIdleImage={setIdleImage} idleImage={idleImage} />
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+
+</html>
